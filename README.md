@@ -1,6 +1,6 @@
 # AEM Purge Packages
 
-A Python 3 command-line utility to clean up outdated Adobe Experience Manager (AEM) package versions. This tool automatically identifies and removes old package versions while retaining the most recent version of each package.
+Python command-line utility to clean up outdated Adobe Experience Manager (AEM) package versions. It automatically identifies and removes old package versions while retaining the most recent version of each package.
 
 ## Prerequisites
 
