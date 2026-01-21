@@ -8,13 +8,14 @@ from datetime import datetime
 TMP_DIRECTORY = '/tmp/package-purge'
 TMP_RETAIN = TMP_DIRECTORY + '/retain.txt'
 TMP_REMOVE = TMP_DIRECTORY + '/remove.txt'
+TIME_TODAY = '%Y-%m-%dT23:59:59'
 SIZE_COEFFICIENTS = dict({
     'KB': 0.000001,
     'MB': 0.001,
     'GB': 1,
 })
 ARGUMENT_DEFINITIONS = {
-    "date": {"test": re.compile(r'\d{4}-\d{2}-\d{2}'), "default": datetime.today().strftime('%Y-%m-%d')},
+    "date": {"test": re.compile(r'\d{4}-\d{2}-\d{2}'), "default": datetime.today().strftime(TIME_TODAY)},
     "path": {"test": re.compile(r"[\w.-]/?"), "default": ""},
     "host": {"test": re.compile(r"\w+(:\d+)?"), "default": "localhost:4502"},
     "user": {"test": re.compile(r".*:.*"), "default": "admin:admin"}
@@ -41,19 +42,30 @@ def main():
     packages = result["packages"]
 
     conventional_packages = [package for package in packages if is_conventional(package)]
+    print("{0} conventional packages packages found".format(len(conventional_packages)))
 
     best_packages = determine_best_packages(conventional_packages)
 
     outdated_packages = [package for package in conventional_packages if package not in best_packages]
     print("{0} outdated packages found".format(len(outdated_packages)))
-    if len(outdated_packages) is 0:
+    if len(outdated_packages) == 0:
         exit(0)
+
+    if args.verbose:
+        sorted_packages = sorted(outdated_packages, key = lambda x : x['path'])
+        for package in sorted_packages:
+            print(" - {0}".format(package["path"]))
+
+        print("Packages with version equal or greater that will not be deleted".format(len(best_packages)))
+        for package in best_packages:
+            print(" - {0}".format(package["path"]))
+
 
     outdated_snapshots = find_outdated_snapshots(packages, outdated_packages)
     all_outdated = outdated_packages + outdated_snapshots
 
     total_size = calculate_size(get_packages(host, credentials, '',
-                                             datetime.today().strftime('%Y-%m-%d'), args.verbose)["packages"])
+                                             datetime.today().strftime(TIME_TODAY), args.verbose)["packages"])
     size_to_remove = calculate_size(all_outdated)
     print_size(size_to_remove, total_size)
 
@@ -69,16 +81,15 @@ def get_packages(host, credentials, path, date, verbose):
     """
     print("Getting package list from AEM ...")
     try:
-        response = requests.get(
-            'http://{0}/bin/querybuilder.json?path=/etc/packages/{1}'
-            '&type=nt:file&p.limit=-1&daterange.property=jcr:created&daterange.upperBound={2}'.format(
-                host, path, date),
-            auth=credentials)
+        url =  'http://{0}/bin/querybuilder.json?path=/etc/packages/{1}&type=nt:file&p.limit=-1'.format(host, path)
+        if re.match(ARGUMENT_DEFINITIONS["date"]["test"], date):
+            url += '&p.limit=-1&daterange.property=jcr:created&daterange.upperBound={0}'.format(date)
+        response = requests.get(url, auth=credentials)
         if response.status_code == 200:
             data = response.json()
             print("Done" if data["success"] else "Failed")
-            if verbose:
-                print(data)
+            # if verbose:
+            #     print(data)
 
             return {
                 "total": data["results"],
@@ -104,9 +115,9 @@ def is_conventional(package):
     if '.snapshot' in path:
         return False
 
-    regex = re.compile(r'(^.*-)(\d{1,3}(\.\d{1,3})?(.\d{1,4})?)(\.zip)$')
+    regex = re.compile(r'(^.*-)(\d{1,3}(\.\d{1,3})?(\.\d{1,3})?(\.\d{1,4})?)(\.zip)$')
     parts = re.search(regex, path)
-    return parts is not None and len(parts.groups()) == 5
+    return parts != None and (len(parts.groups()) == 5 or len(parts.groups()) == 6)
 
 
 def calculate_size(packages):
@@ -116,7 +127,7 @@ def calculate_size(packages):
     total = 0.0
     regex = re.compile(r'(\d+)(\s\w{2})')
     sizes = [package["size"] for package in packages]
-    size_matched = [item for item in [re.search(regex, size) for size in sizes] if item is not None]
+    size_matched = [item for item in [re.search(regex, size) for size in sizes] if item != None]
     for size in size_matched:
         number = int(size.group(1))
         unit = size.group(2).strip()
@@ -130,7 +141,7 @@ def compare_version(a, b):
     a_number = int(a[0])
     b_number = int(b[0])
     comparison = a_number - b_number
-    if comparison is 0:
+    if comparison == 0:
         return compare_version(a[1:], b[1:])
     return comparison
 
@@ -158,7 +169,7 @@ def determine_best_packages(packages):
 
 
 def separate_name_from_version(path):
-    regex = re.compile(r'(^.*-)(\d{1,3}(\.\d{1,3})?(.\d{1,4})?)(\.zip)')
+    regex = re.compile(r'(^.*-)(\d{1,3}(\.\d{1,3})?(\.\d{1,3})?(\.\d{1,4})?)(\.zip)')
     parts = re.search(regex, path)
     return parts.group(1), parts.group(2).split('.')
 
@@ -185,7 +196,7 @@ def set_argument(name, args):
     arg = getattr(args, name)
     if "default" in ARGUMENT_DEFINITIONS[name].keys():
         default = ARGUMENT_DEFINITIONS[name]["default"]
-        result = arg if arg is not None else default
+        result = arg if arg != None else default
     else:
         result = arg
     if args.verbose:
@@ -196,7 +207,7 @@ def set_argument(name, args):
 def validate_arguments(args):
     for key, value in ARGUMENT_DEFINITIONS.items():
         arg = getattr(args, key)
-        if arg is not None:
+        if arg != None:
             valid = re.match(value['test'], arg)
             if not valid:
                 print("{0} argument value ({1}) is invalid".format(key, arg))
@@ -207,9 +218,9 @@ def confirm():
     Asks user to confirm purge.
     """
     confirmation = input("Do you wish to continue? (y/n): ")
-    delete = confirmation is 'y'
+    delete = confirmation == 'y'
     if not delete:
-        if confirmation is not 'n':
+        if confirmation != 'n':
             print("Input not recognized. Aborting operation")
             exit(1)
         print("Aborting operation")
@@ -224,7 +235,7 @@ def purge_packages(outdated_packages, host, credentials, verbose, force):
     for package in outdated_packages:
         path = package["path"]
         print("Deleting " + path)
-        confirmation = force or input("Do you wish to continue? (y/n)") is 'y'
+        confirmation = force or input("Do you wish to continue? (y/n)") == 'y'
         if confirmation:
             try:
                 response = requests.post(
@@ -268,7 +279,7 @@ def find_outdated_snapshots(packages, outdated_packages):
 
     for path in outdated_package_paths:
         name = get_package_name_from_path(path)
-        if name is not None:
+        if name != None:
             outdated_package_names.append(name)
 
     result = []
@@ -282,7 +293,7 @@ def find_outdated_snapshots(packages, outdated_packages):
 def get_package_name_from_path(path):
     regex = re.compile(r'(.*)(/)(.*\.zip)')
     search = re.search(regex, path)
-    if len(search.groups()) is 3:
+    if len(search.groups()) == 3:
         return search.group(3)
 
 
